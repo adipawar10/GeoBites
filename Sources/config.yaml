@@ -1,0 +1,30 @@
+# Bounding box: Manhattan + Brooklyn core (approximate), WGS84
+bbox:
+  lat_min: 40.65
+  lat_max: 40.88
+  lon_min: -74.05
+  lon_max: -73.85
+
+# NYC Open Data SODA dataset: DOHMH Restaurant Inspection Results
+nyc_inspections:
+  dataset_id: "43nn-pn8j"
+  base_url: "https://data.cityofnewyork.us/resource/43nn-pn8j.json"
+  # SODA default limit; script paginates
+  page_limit: 50000
+
+# DBSCAN (meters → eps in degrees, rough at NYC latitude)
+dbscan:
+  eps_meters: 80
+  min_samples: 3
+
+# Synthetic delivery listings (demo layer — see README)
+synthetic:
+  seed: 42
+  num_hubs: 22
+  brands_per_hub_min: 8
+  brands_per_hub_max: 14
+  hub_jitter_meters: 12
+
+# Evaluation: buffer around each hub for "exposure"
+exposure:
+  buffer_meters: 400

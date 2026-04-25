@@ -1,0 +1,20 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+*.aux
+*.log
+*.out
+*.synctex.gz
+
+# Large/local datasets (do not push to GitHub)
+data/raw/Yelp JSON/
+data/raw/*.json
+data/raw/*.tar
+data/raw/*.zip
+
+# Generated artifacts (reproducible via pipeline)
+data/processed/*.csv
+data/processed/*.json
+figures/*.png
+figures/*.html

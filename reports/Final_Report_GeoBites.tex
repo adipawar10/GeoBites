@@ -1,0 +1,295 @@
+% Final report — CSC 4740/6740 (GeoBites)
+% Compile: pdflatex Final_Report_GeoBites.tex && pdflatex Final_Report_GeoBites.tex
+% For strict IEEE PDF, paste prose into the official IEEE LaTeX template from ieee.org.
+\documentclass[10pt,twocolumn]{article}
+\usepackage[margin=0.75in]{geometry}
+\usepackage{times}
+\usepackage{graphicx}
+\graphicspath{{../figures/}}
+\usepackage{amsmath,amssymb}
+\usepackage{url}
+\usepackage{cite}
+\usepackage{booktabs}
+\usepackage{hyperref}
+
+\title{Ghost Kitchen Hub Detection, Nearby Impact, and Temporal Proxies:\\
+An End-to-End Data Mining Study for New York City Restaurants}
+\author{Adi Pawar\\Georgia State University\\[4pt]\underline{\hspace{1.6in}}}
+\date{April 24, 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This report presents a complete, reproducible data mining pipeline for analyzing how ghost-kitchen style hub concentration may relate to neighborhood restaurant outcomes in New York City. The workflow ingests NYC DOHMH restaurant inspection data, builds a delivery-listing layer for clustering, detects hubs with DBSCAN in a meter-consistent local projection, computes exposure variables for nearby establishments, and evaluates multiple outcomes: inspection-score shifts, closure-rate differences, and sentiment behavior in review text around hub opening times. We also add robustness checks (permutation testing, effect size, and DBSCAN sensitivity curves) and document limitations from real-world data access constraints. While causal conclusions are out of scope for this term project, the implementation demonstrates a technically sound framework that can transition directly to real platform feeds and dated review datasets in future work.
+\end{abstract}
+
+\section*{How to read this report}
+This report is written for both technical and non-technical readers. If you are new to data mining, read in this order: (1) Introduction and Concept Primer, (2) Methodology overview diagrams and definitions, (3) Quantitative results table, (4) Discussion and limitations, and finally (5) Future studies. The main takeaway is not just whether one metric is ``significant,'' but whether the entire analytical workflow is transparent, reproducible, and useful for decision-making.
+
+\section{Introduction}
+Third-party delivery platforms have substantially reorganized urban food logistics. Ghost kitchens---delivery-only production facilities that often launch multiple virtual brands from one physical location---can alter local competition while remaining hard to observe in ordinary street-level data. In NYC, this matters because dense neighborhoods with many independent restaurants can experience digital competition that is not obvious from storefront counts alone.
+
+\subsection{Concept primer (plain-language definitions)}
+\begin{itemize}
+\item \textbf{Ghost kitchen:} a kitchen that mainly serves delivery orders and may operate multiple online brands from one place.
+\item \textbf{Hub:} a location where many delivery listings are concentrated in a small area.
+\item \textbf{DBSCAN:} a clustering algorithm that groups dense points together and labels isolated points as noise.
+\item \textbf{Exposure:} whether a restaurant is near a detected hub (in this project, within 400 meters).
+\item \textbf{Proxy variable:} an indirect measurement used when a direct measurement is unavailable.
+\item \textbf{$p$-value:} a measure of how unusual an observed difference would be if there were no true difference.
+\end{itemize}
+
+\subsection{Why I chose this topic}
+I chose this topic because I am personally interested in how businesses work and what external forces affect them. I selected restaurants because in India, where I am from, ghost kitchens have been increasing rapidly and visibly changing the food business landscape. I wanted to study whether similar patterns can be analyzed in the U.S., and NYC is a natural case because it is crowded, faces space constraints, and has high rent/property costs that can make centralized delivery-focused models economically attractive.
+
+\subsection{Related work and positioning}
+Restaurant data mining commonly focuses on recommendation, review classification, and aggregate market trends. Spatial urban analytics often studies density hot spots, land-use patterns, and mobility interactions. This project combines these ideas with a practical objective: identify hub-like clusters of delivery listings, measure which traditional restaurants are exposed to those hubs, and test whether nearby establishments show measurable differences in operational or reputational outcomes.
+
+\textbf{Core research questions.}
+\begin{enumerate}
+\item Can we reliably detect ghost-kitchen-like hubs from listing geography?
+\item Are nearby traditional establishments observably different from farther establishments?
+\item Do closure proxies and sentiment proxies change after hub-opening times?
+\end{enumerate}
+
+\textbf{Formal setup.} Let establishment points be $P=\{p_i\}$ with coordinates $(\phi_i,\lambda_i)$ and delivery-listing points be $L=\{\ell_j\}$. We estimate cluster centroids $H$ with DBSCAN and define exposure by nearest-hub distance and local hub density. Outcomes include inspection score metrics, closure-action proxies, and review sentiment indicators.
+
+\textbf{System overview.} Pipeline stages are acquisition $\rightarrow$ cleaning $\rightarrow$ listing-layer generation $\rightarrow$ DBSCAN hub detection $\rightarrow$ exposure feature engineering $\rightarrow$ outcome modeling (scores/closures/sentiment) $\rightarrow$ figures and artifacts. All stages run through a one-command script and write transparent intermediate files for reproducibility.
+
+\subsection{Report organization}
+Section 2 presents methodology and implementation choices. Section 3 presents empirical results and visual evidence. Section 4 discusses interpretation, assumptions, and practical meaning. Section 5 provides implementation and reproducibility notes. Section 6 presents future studies. Section 7 summarizes learning outcomes and contribution reflection.
+
+\subsection{Threats to validity}
+Inspection scores are not direct revenue or profit measures. Closure variables are based on action-text proxies, not bankruptcy filings. Real delivery platform feeds and review timestamps are difficult to obtain in a terms-compliant way. Therefore, parts of this project use synthetic/proxy data layers to preserve reproducibility and full pipeline execution under real-world data-access constraints. These limits are explicitly documented, and future studies are proposed to replace synthetic/proxy layers with verified longitudinal datasets.
+
+\section{Methodology}
+
+\subsection{Design rationale}
+The architecture deliberately separates stable public records from volatile private-platform signals.
+\begin{itemize}
+\item \textbf{Stable layer:} NYC DOHMH inspections provide geocoded establishment entities with consistent identifiers.
+\item \textbf{Volatile layer:} delivery listings and review feeds are integrated through modular scripts so they can be replaced without rewriting the analytical core.
+\end{itemize}
+This separation mirrors practical data-engineering design and keeps the project gradable under network or API constraints.
+
+\subsection{Method choices I can explain orally}
+\begin{itemize}
+\item \textbf{Why DBSCAN:} ghost-kitchen behavior is naturally a density phenomenon (many listings packed into a small area), and DBSCAN detects dense clusters while allowing outliers as noise.
+\item \textbf{Why local meters:} business questions are distance-based (e.g., 400m neighborhood effects), so clustering in meters is easier to interpret than raw latitude/longitude degrees.
+\item \textbf{Why permutation test:} unlike only relying on parametric assumptions, permutation testing checks whether observed group differences are unusual under random re-labeling.
+\item \textbf{Why closure and sentiment proxies:} they provide additional impact dimensions beyond inspection scores and help form a more complete business-effect analysis.
+\end{itemize}
+
+\subsection{Data sources}
+\textbf{Primary public source:} NYC Open Data DOHMH inspection dataset (\texttt{43nn-pn8j}), queried for Manhattan/Brooklyn bounding box coordinates. \\
+\textbf{Fallback inspection source:} synthetic DOHMH-style records with compatible schema (used when network access blocks Socrata API). \\
+\textbf{Delivery listing layer:} synthetic listing layer with reproducible random seed, creating multiple virtual brands per hub seed point. \\
+\textbf{Reviews layer:} sentiment pipeline supports real review files when available; the specific TripAdvisor NYC file obtained in this project lacked date and location fields needed for temporal causal framing, so it is documented under future studies.
+
+\subsection{Cleaning and entity resolution}
+Inspection rows are normalized to lowercase schema, geospatially filtered to the NYC study bbox, and aggregated to one row per CAMIS (restaurant identity). Features include latest coordinates, average score, latest score, number of inspections, latest inspection date, and latest action text when available. This produces a clean establishment table for downstream spatial and statistical analysis.
+
+\subsection{Delivery listing layer}
+Production deployment would ingest real platform exports (e.g., delivery app listings with address and timestamp). In this submission, the listing-generator module samples hub seeds from empirical establishment geography and creates $k \in [8,14]$ listings per hub with small Gaussian spatial jitter. We also assign proxy hub opening dates to enable before/after method testing.
+
+\subsection{DBSCAN hub detection}
+We transform WGS84 coordinates to a local tangent-plane approximation:
+\begin{align}
+x &= R\cdot \Delta\lambda \cdot \cos\phi_0,\\
+y &= R\cdot \Delta\phi,
+\end{align}
+with Earth radius $R{=}6{,}371{,}000$\,m, angular deltas in radians, and reference latitude/longitude at sample mean. DBSCAN uses Euclidean metric in meters ($\varepsilon=80$ m, \texttt{min\_samples}=3). We use this implementation because it is stable and interpretable on city-scale data.
+
+\subsection{Exposure metrics}
+For hub centroids $\{h_m\}$, each establishment receives
+$d_i=\min_m \mathrm{dist}(p_i,h_m)$ (haversine in NumPy) and
+$c_i=\#\{m : \mathrm{dist}(p_i,h_m)\le r\}$ with $r{=}400$\,m. Binary exposure is $\mathbb{I}[d_i\le r]$.
+
+\subsection{Outcome modeling and tests}
+\textbf{Inspection outcomes.} Exposed vs.\ control comparisons use Welch $t$-tests, Cohen's $d$, and a two-sided permutation test over mean differences. We also compute Spearman associations with distance and local hub count. \\
+\textbf{Controlled specification.} A linear model is fit on score with exposure, hub count, and available categorical controls (borough/cuisine/zip dummies). \\
+\textbf{Closure outcomes.} We derive \texttt{closed\_proxy} from latest action text and compare closure rates between exposed and control groups with a $\chi^2$ test. \\
+\textbf{Before/after opening proxy.} Using nearest-hub opening date and latest inspection date, we estimate ``closed after opening'' rates for exposed and control groups. \\
+\textbf{Sentiment outcomes.} A lexicon-based sentiment scorer labels review text as positive/neutral/negative and computes mean sentiment and pre/post deltas where dates are available.
+
+\subsection{Novel contributions in this project}
+\begin{enumerate}
+\item Meter-consistent DBSCAN implementation for city-scale hub detection.
+\item Exposure + closure + sentiment unified into a single reproducible pipeline.
+\item Temporal-proxy modules for opening impact with explicit assumptions.
+\item Parameter-stability diagnostics via epsilon sensitivity sweep.
+\end{enumerate}
+
+\section{Evaluation}
+
+\subsection{Experimental settings}
+Default configuration lives in \texttt{Sources/config.yaml}. Commands: create Python 3.10+ virtual environment, run \texttt{pip install -r requirements.txt}, then run \texttt{python Sources/run\_pipeline.py}. Outputs populate the \texttt{data/processed} and \texttt{figures} directories.
+
+\subsection{Quantitative results}
+Table~\ref{tab:main} summarizes key outputs from the latest full run.
+
+\begin{table}[t]
+\centering
+\caption{Main evaluation outputs}
+\label{tab:main}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Metric & Value \\
+\midrule
+Detected hubs & 22 \\
+Establishments & 4,499 \\
+Exposed (within 400m) & 124 \\
+Control & 4,375 \\
+Mean score (exposed) & 16.94 \\
+Mean score (control) & 17.48 \\
+Diff (exp - ctl) & -0.541 \\
+Welch $p$-value & 0.259 \\
+Permutation $p$-value & 0.188 \\
+Cohen's $d$ & -0.119 \\
+Closure rate (exposed) & 1.61\% \\
+Closure rate (control) & 3.09\% \\
+Closure $\chi^2$ $p$-value & 0.347 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Interpretation.} The implemented framework clearly detects hub concentration but does not show a statistically strong difference in inspection-score outcomes or closure rates in the current run. This is expected under a neutral proxy-generation process where hub placement is not engineered to force detrimental outcomes.
+
+\subsection{What a non-technical reader should take away}
+Three practical conclusions can be read directly from the results: (1) the method can identify potential ghost-kitchen hub zones in a reproducible way, (2) the current run does not provide strong statistical evidence of harmful nearby effects on the selected outcome variables, and (3) the framework is already structured to plug in stronger real-world datasets for more decisive policy or business conclusions.
+
+\subsection{Before/after opening proxy findings}
+The opening-analysis module computes whether closure proxy events occur after the nearest hub opening date. In the current run, exposed closure-after-opening rate is approximately 1.61\% vs.\ 2.54\% for controls. This differential should be interpreted cautiously: opening dates are proxy variables and not verified launch events from delivery platforms.
+
+\subsection{Sentiment analysis findings}
+The sentiment module computes review-level sentiment scores and aggregates pre/post opening where dates are available. The current pipeline run reports a larger positive post-pre shift in exposed-group mean sentiment than control-group shift. However, sentiment conclusions are still method-demonstration level until real, reliably matched NYC review datasets with timestamps and addresses are integrated end-to-end.
+
+\subsection{Figures}
+Figure~\ref{fig:scatter} plots inspection scores against distance to the nearest detected hub (color indicates membership in the 400\,m exposure buffer). Figure~\ref{fig:hubhist} summarizes hub sizes measured in virtual listings per DBSCAN cluster. Figure~\ref{fig:sens} reports the sensitivity of hub counts to DBSCAN $\varepsilon$.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{score_vs_distance.png}
+\caption{Mean DOHMH inspection score versus distance to nearest hub.}
+\label{fig:scatter}
+\end{figure}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{hub_size_distribution.png}
+\caption{Empirical distribution of listings per hub under the constructed delivery listing layer.}
+\label{fig:hubhist}
+\end{figure}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{sensitivity_eps.png}
+\caption{DBSCAN $\varepsilon$ sweep (meters) versus detected hub cardinality.}
+\label{fig:sens}
+\end{figure}
+
+\subsection{Attempted real review integration}
+We integrated ingestion modules for Yelp Open Dataset and TripAdvisor NYC Kaggle data. The provided Yelp snapshot contained no NYC businesses in the target bbox, and the TripAdvisor file lacked per-review date and geolocation fields required for robust temporal matching. Rather than forcing invalid joins, the pipeline now records these constraints as explicit machine-readable summaries and falls back to compatible proxy data so experiments remain reproducible and auditable.
+
+\subsection{Interpretation note on synthetic/proxy components}
+For transparency, this report distinguishes between results produced from directly observed public records and results produced from synthetic/proxy components used to complete missing data layers. This design supports method validation and reproducibility, but outcome interpretations should be treated as preliminary until all key exposure and temporal variables are populated from validated real-world sources.
+
+\section{Discussion}
+\subsection{Business interpretation}
+From a business perspective, this project provides a neighborhood intelligence workflow rather than a single yes/no answer. It helps identify where delivery concentration is occurring, quantify which existing restaurants are most exposed to that concentration, and compare exposed vs.\ non-exposed groups on measurable outcomes.
+
+\subsection{Why this still matters when effects are weak}
+Even when current statistical contrasts are weak, the framework is useful because it establishes the data contracts, quality checks, and repeatable computations needed for longitudinal monitoring. In practice, this allows analysts to rerun the same pipeline monthly and detect trend changes as better data becomes available.
+
+\subsection{Limits of interpretation}
+The study should not be interpreted as ``ghost kitchens have no effect.'' Instead, it means that with the current variables and available data contracts, strong adverse effects were not detected in this run. This distinction is important for responsible communication of data-mining results.
+
+\section{Implementation details and reproducibility}
+\subsection{Code organization}
+The \texttt{Sources/} directory is organized by stage:
+\begin{itemize}
+\item \texttt{acquire.py}, \texttt{fallback\_data.py}: raw-data acquisition with resilient fallback behavior.
+\item \texttt{clean.py}: schema normalization and entity-level aggregation.
+\item listing-generator module and \texttt{cluster\_hubs.py}: proxy listing generation and hub detection.
+\item \texttt{evaluate.py}, \texttt{closure\_opening\_analysis.py}, \texttt{sentiment\_opening\_analysis.py}: outcome analyses.
+\item \texttt{visualize.py}, \texttt{sensitivity.py}: communication artifacts and parameter diagnostics.
+\item \texttt{run\_pipeline.py}: end-to-end orchestration.
+\end{itemize}
+
+\subsection{Reproducibility checklist}
+\begin{enumerate}
+\item Create virtual environment and install dependencies from \texttt{requirements.txt}.
+\item Run \texttt{python Sources/run\_pipeline.py} from project root.
+\item Verify expected outputs in \texttt{data/processed/}:
+\begin{itemize}
+\item \texttt{evaluation\_summary.json}
+\item \texttt{opening\_closure\_summary.json}
+\item \texttt{sentiment\_opening\_summary.json}
+\item \texttt{sensitivity\_eps.csv}
+\end{itemize}
+\item Verify figures in \texttt{figures/}:
+\texttt{score\_vs\_distance.png}, \texttt{hub\_size\_distribution.png}, \texttt{sensitivity\_eps.png}, and \texttt{map\_hubs.html}.
+\end{enumerate}
+
+\subsection{Failure handling and safeguards}
+To make the project robust in lab conditions, the implementation includes explicit safeguards:
+\begin{itemize}
+\item \textbf{Network failure guard:} if Socrata API calls fail, offline-compatible proxy inspection data is generated automatically.
+\item \textbf{Data contract guard:} sentiment and review ingestion scripts write structured summary files describing match success/failure rather than silently dropping rows.
+\item \textbf{Metric consistency guard:} spatial clustering is performed in meters after coordinate projection, and exposure distance uses haversine for geodesic consistency.
+\item \textbf{Interpretation guard:} output summaries and this report distinguish clearly between empirical findings and proxy-based demonstration findings.
+\end{itemize}
+
+\subsection{Ethics and responsible use}
+This project intentionally avoids unauthorized scraping and private account automation. Public data usage and reproducible proxy fallbacks were prioritized over opaque data collection. The resulting analyses are therefore transparent and safe for academic demonstration, while preserving a clear pathway to stronger real-data studies when approved sources are available.
+
+\section{Future studies}
+\textbf{(1) Real opening events.} Replace synthetic/proxy hub opening dates with verified launch dates from platform business records or scraped historical snapshots (with ToS compliance). \\
+\textbf{(2) Real review linkage.} Replace synthetic/proxy review layers with review sources containing restaurant address/geocoordinates plus timestamp, then perform deterministic or high-confidence probabilistic entity resolution against CAMIS entities. \\
+\textbf{(3) Stronger causal design.} Implement difference-in-differences or event-study models around confirmed hub openings, with neighborhood and season fixed effects. \\
+\textbf{(4) Business outcomes.} Add closure filings, sales tax proxies, or footfall indicators to complement health inspection outcomes. \\
+\textbf{(5) Uncertainty reporting.} Bootstrap confidence intervals for closure and sentiment deltas and conduct placebo tests on pseudo-opening dates.
+
+\subsection{What I would do in the next 2 weeks}
+If I had two additional weeks, I would prioritize three tasks: (i) obtain one review dataset with reliable date and location fields to run a defensible temporal sentiment test; (ii) collect validated opening dates for a subset of known ghost-kitchen facilities and run an event-study style analysis; and (iii) perform manual validation on a sample of detected hubs (map inspection plus business-directory verification) to report precision/recall-style quality indicators for the clustering stage.
+
+\section{Learning outcomes}
+\textbf{Tasks accomplished by member.}
+\begin{itemize}
+\item Built complete data pipeline with modular scripts and config-driven parameters.
+\item Implemented hub detection, exposure engineering, closure analysis, and sentiment modules.
+\item Added robustness tests (effect size, permutation test, sensitivity sweep).
+\item Produced documentation, figures, map output, and reproducible report artifacts.
+\end{itemize}
+\textbf{Unaccomplished tasks and reasons.}
+\begin{itemize}
+\item Full real-platform integration was not completed due to API/credential/ToS limitations.
+\item High-confidence real review temporal linkage was deferred because available public files lacked key columns (dates/geo IDs for matching).
+\end{itemize}
+\textbf{Personal reflections and lessons learned.}
+\begin{itemize}
+\item One challenge I faced was that seemingly relevant real datasets did not always include the identifiers needed for rigorous matching. I solved this by building explicit ingestion checks and summary files so missing-data constraints were visible rather than hidden.
+\item Another challenge was deciding between mathematically accurate but fragile implementation paths and robust execution paths. I chose a local meter projection for DBSCAN because it is stable, interpretable, and aligned with neighborhood-distance questions.
+\item I also learned that relying only on one significance test can be misleading in noisy urban data, which is why I added effect size and permutation testing to make inference more robust.
+\end{itemize}
+
+\section{Group member evaluation}
+Solo project (GeoBites). Self-evaluation: \textbf{10/10} in effort, participation, and contribution.
+
+\section*{Demo video}
+Demo link: \\
+Suggested demo flow: run pipeline, show generated artifacts, explain hub map, summarize score/closure/sentiment outputs, and conclude with limitations + future studies.
+
+\section*{Acknowledgment}
+Course staff and peers for rubric clarity; NYC DOHMH for open inspection data.
+
+\begin{thebibliography}{00}
+\bibitem{nyc} NYC Open Data, ``DOHMH New York City Restaurant Inspection Results,'' dataset 43nn-pn8j.
+\bibitem{dbscan} Ester et al., ``A density-based algorithm for discovering clusters in large spatial databases with noise,'' KDD, 1996.
+\bibitem{platform} Platform economy and food-delivery market surveys on ghost kitchens and virtual brands.
+\bibitem{yelp} Yelp, ``Yelp Open Dataset,'' official dataset portal.
+\bibitem{tripadvisor} Kaggle, ``Trip Advisor Newyork City restaurants Dataset 10k+.''
+\end{thebibliography}
+
+\end{document}
